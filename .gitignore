@@ -1,0 +1,7 @@
+*.log
+log/
+ui_src/node_modules/
+ui_src/src/user_components/
+app/
+.env
+config.yaml
