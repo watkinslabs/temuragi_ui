@@ -2,7 +2,7 @@
 import React, { createContext, useState, useContext, useRef, useCallback, useEffect } from 'react';
 import config from '../config';
 
-const SiteContext = createContext(null);
+export const SiteContext = createContext(null);
 
 export const useSite = () => {
     const context = useContext(SiteContext);
@@ -114,6 +114,7 @@ export const SiteProvider = ({ children }) => {
     }, [current_context]);
 
     // Context switch - fetch new menu items
+    // Context switch - fetch new menu items
     const switch_context = async (context_name) => {
         console.log('SiteContext: Switching context from', current_context, 'to', context_name);
 
@@ -123,9 +124,16 @@ export const SiteProvider = ({ children }) => {
             return;
         }
 
+        const old_context = current_context;
+
         // Update the context immediately
         setCurrentContext(context_name);
         sessionStorage.setItem('current_context', context_name);
+
+        // Emit context change event for cache clearing
+        window.dispatchEvent(new CustomEvent('context_changed', {
+            detail: { new_context: context_name, old_context: old_context }
+        }));
 
         // Clear main content by navigating to home
         if (window.navigate_to) {
@@ -160,8 +168,14 @@ export const SiteProvider = ({ children }) => {
                 // If server returned different context, update it
                 if (data.current_context && data.current_context !== context_name) {
                     console.log('SiteContext: Server corrected context to:', data.current_context);
-                    setCurrentContext(data.current_context);
-                    sessionStorage.setItem('current_context', data.current_context);
+                    const corrected_context = data.current_context;
+                    setCurrentContext(corrected_context);
+                    sessionStorage.setItem('current_context', corrected_context);
+                    
+                    // Emit another event for the correction
+                    window.dispatchEvent(new CustomEvent('context_changed', {
+                        detail: { new_context: corrected_context, old_context: context_name }
+                    }));
                 }
             }
         } catch (error) {
@@ -170,7 +184,6 @@ export const SiteProvider = ({ children }) => {
             setContextLoading(false);
         }
     };
-
     // Clear context data on logout
     const clear_context = () => {
         console.log('SiteContext: Clearing all context data');
@@ -220,3 +233,6 @@ export const SiteProvider = ({ children }) => {
         </SiteContext.Provider>
     );
 };
+
+
+ 

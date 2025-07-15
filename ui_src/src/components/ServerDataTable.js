@@ -1,8 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigation } from '../App';
-import { useSite } from '../contexts/SiteContext';
-import config from '../config';
-
 
 const ServerDataTable = ({
     // Simple mode - just pass report_id
@@ -15,6 +11,20 @@ const ServerDataTable = ({
     on_config_loaded = null,
     overrides = {}
 }) => {
+    // Get dependencies at render time, not module load time
+    const useNavigation = window.useNavigation;
+    const useSite = window.useSite;
+    const config = window.app_utils?.config || window.appConfig;
+    
+    // Validate dependencies
+    if (!useNavigation || !useSite || !config) {
+        return (
+            <div className="alert alert-danger m-3">
+                ServerDataTable: Missing required dependencies. Ensure app is fully initialized.
+            </div>
+        );
+    }
+
     // State
     const [loading, set_loading] = useState(false);
     const [initial_loading, set_initial_loading] = useState(true);
@@ -28,11 +38,14 @@ const ServerDataTable = ({
     const [search_term, set_search_term] = useState('');
     const [sort_config, set_sort_config] = useState({ column: null, direction: null });
     const [error, set_error] = useState(null);
+    const [auto_refresh_enabled, set_auto_refresh_enabled] = useState(false);
+    const [last_refresh_time, set_last_refresh_time] = useState(null);
 
     // Refs
     const search_input_ref = useRef(null);
+    const refresh_interval_ref = useRef(null);
 
-    // Hooks
+    // Hooks - from window
     const { navigate_to } = useNavigation();
     const { current_context } = useSite();
 
@@ -56,7 +69,8 @@ const ServerDataTable = ({
                 is_model: true,
                 custom_options: {
                     cache_enabled: false,
-                    refresh_interval: 0,
+                    refresh_interval: 30000, // Default 30 seconds
+                    auto_refresh: false,
                     row_limit: 10000
                 },
                 ...options,
@@ -110,6 +124,11 @@ const ServerDataTable = ({
 
                 set_table_config(merged_config);
                 set_page_size(merged_config.page_length || 25);
+                
+                // Set auto refresh state based on config
+                if (merged_config.custom_options?.auto_refresh) {
+                    set_auto_refresh_enabled(true);
+                }
 
                 // Callback if provided
                 if (on_config_loaded) {
@@ -265,6 +284,7 @@ const ServerDataTable = ({
                 set_total_records(response.recordsTotal || 0);
                 set_filtered_records(response.recordsFiltered || response.recordsTotal || 0);
                 set_initial_loading(false);
+                set_last_refresh_time(new Date());
             } else {
                 throw new Error(response.error || 'Failed to load data');
             }
@@ -283,6 +303,30 @@ const ServerDataTable = ({
             load_data();
         }
     }, [load_data, table_config, config_loading]);
+
+    // Auto refresh effect
+    useEffect(() => {
+        if (auto_refresh_enabled && table_config && !config_loading) {
+            const refresh_interval = table_config.custom_options?.refresh_interval || 30000;
+            
+            refresh_interval_ref.current = setInterval(() => {
+                load_data();
+            }, refresh_interval);
+
+            return () => {
+                if (refresh_interval_ref.current) {
+                    clearInterval(refresh_interval_ref.current);
+                    refresh_interval_ref.current = null;
+                }
+            };
+        } else {
+            // Clear interval if auto refresh is disabled
+            if (refresh_interval_ref.current) {
+                clearInterval(refresh_interval_ref.current);
+                refresh_interval_ref.current = null;
+            }
+        }
+    }, [auto_refresh_enabled, table_config, config_loading, load_data]);
 
     // Handle sorting
     const handle_sort = (column_name) => {
@@ -664,6 +708,33 @@ const ServerDataTable = ({
                 </div>
             </div>
 
+            {/* Auto Refresh Controls */}
+            {table_config?.custom_options?.refresh_interval > 0 && (
+                <div className="row mb-3">
+                    <div className="col">
+                        <div className="d-flex justify-content-between align-items-center">
+                            <div className="form-check form-switch">
+                                <input
+                                    className="form-check-input"
+                                    type="checkbox"
+                                    id="auto_refresh_toggle"
+                                    checked={auto_refresh_enabled}
+                                    onChange={(e) => set_auto_refresh_enabled(e.target.checked)}
+                                />
+                                <label className="form-check-label" htmlFor="auto_refresh_toggle">
+                                    Auto-refresh every {Math.round((table_config.custom_options.refresh_interval || 30000) / 1000)} seconds
+                                </label>
+                            </div>
+                            {last_refresh_time && (
+                                <small className="text-muted">
+                                    Last refreshed: {last_refresh_time.toLocaleTimeString()}
+                                </small>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Search Bar */}
             {table_config.show_search && (
                 <div className="row mb-4">
@@ -826,5 +897,6 @@ const ServerDataTable = ({
         </div>
     );
 };
+
 
 export default ServerDataTable;

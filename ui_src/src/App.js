@@ -1,11 +1,13 @@
-// react/src/App.js
+// src/App.js
 import React, { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SiteProvider, useSite } from './contexts/SiteContext';
-import Login from './components/Login';
+import Login from './pages/Login/Login';
 import DynamicPage from './components/DynamicPage';
 import LoadingScreen from './components/LoadingScreen';
-import DefaultLayout from './components/DefaultLayout';
+import DefaultLayout from './components/DefaultLayout/DefaultLayout';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 // Navigation context for state-based routing
 const NavigationContext = React.createContext();
@@ -44,42 +46,39 @@ const ContextConnector = ({ children }) => {
     return children;
 };
 
-// Main app content - layout stays stable, only content changes
+// Main app content
 const AppContent = () => {
     const [current_view, setCurrentView] = useState('home');
     const [view_params, setViewParams] = useState({});
-    const { initialize_context, fetch_site_config, current_context } = useSite();
+    const { initialize_context, fetch_site_config } = useSite();
     const { isAuthenticated } = useAuth();
 
-    // Initialize context and fetch site config when authenticated
+    // Initialize app
     useEffect(() => {
-        if (!isAuthenticated) {
-            return; // Don't fetch if not authenticated
-        }
+        if (!isAuthenticated) return;
 
         const init_app = async () => {
-            // First check for stored context
-            const stored_context = sessionStorage.getItem('current_context') || localStorage.getItem('default_context');
+            // Initialize context
+            const stored_context = sessionStorage.getItem('current_context') || 
+                                 localStorage.getItem('default_context');
             
             if (stored_context) {
-                console.log('Initializing with stored context:', stored_context);
                 initialize_context(stored_context);
             }
-            
-            // Always fetch site config to get menu items and available contexts
-            console.log('Fetching initial site config...');
+
+            // Fetch site config
             await fetch_site_config('/');
-            
-            // Check if we have an initial view from login
+
+            // Check for initial view
             const initial_view = sessionStorage.getItem('initial_view');
             if (initial_view) {
                 navigate_to(initial_view);
                 sessionStorage.removeItem('initial_view');
             }
         };
-        
+
         init_app();
-    }, [isAuthenticated]); // Re-run when authentication status changes
+    }, [isAuthenticated]);
 
     // Navigation function
     const navigate_to = (view, params = {}) => {
@@ -88,11 +87,45 @@ const AppContent = () => {
         setViewParams(params);
     };
 
-    // Make navigate_to globally available for context switching
+    // Make navigate_to globally available
     useEffect(() => {
         window.navigate_to = navigate_to;
         return () => {
             delete window.navigate_to;
+        };
+    }, []);
+
+    // Setup global showToast function
+    useEffect(() => {
+        window.showToast = (message, type = 'info') => {
+            const toast_options = {
+                position: "top-right",
+                autoClose: 3000,
+                hideProgressBar: false,
+                closeOnClick: true,
+                pauseOnHover: true,
+                draggable: true,
+            };
+
+            switch (type) {
+                case 'success':
+                    toast.success(message, toast_options);
+                    break;
+                case 'error':
+                    toast.error(message, toast_options);
+                    break;
+                case 'warning':
+                    toast.warning(message, toast_options);
+                    break;
+                case 'info':
+                default:
+                    toast.info(message, toast_options);
+                    break;
+            }
+        };
+
+        return () => {
+            delete window.showToast;
         };
     }, []);
 
@@ -108,13 +141,13 @@ const AppContent = () => {
                 <DefaultLayout>
                     <DynamicPage />
                 </DefaultLayout>
+                <ToastContainer />
             </ProtectedApp>
         </NavigationContext.Provider>
     );
 };
 
 const App = () => {
-    // Don't change the URL - just leave it wherever it was loaded
     return (
         <AuthProvider>
             <SiteProvider>

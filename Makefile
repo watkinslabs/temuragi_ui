@@ -3,18 +3,18 @@
 # phony targets
 .PHONY: 
 
-# app_uibuild commands
+# ui_srcbuild commands
 react-install:
-	cd app_ui&& npm install
+	cd ui_src&& npm install
 
-react-build:
-	cd app_ui&& npm run build
+build:
+	cd ui_src&& npm run build
 
-react-upload:
-	cd app_ui&& API_TOKEN="$(API_TOKEN)" npm run build:components
+upload: build
+	cd ui_src&& API_TOKEN="$(API_TOKEN)" npm run upload:components
 
 react-clean:
-	cd app_ui&& npm run clean
+	cd ui_src&& npm run clean
 
 # Full component build and deploy
 components: react-build react-upload
@@ -22,11 +22,11 @@ components: react-build react-upload
 
 # Development mode
 react-watch:
-	cd app_ui&& npm run watch
+	cd ui_src&& npm run watch
 
 # Complete setup
 setup-react: react-install
-	@echo "app_uidependencies installed"
+	@echo "ui_srcdependencies installed"
 
 # Build everything
 build-all: react-build react-upload
@@ -35,4 +35,4 @@ build-all: react-build react-upload
 
 
 build:
-	@cd app_ui&& npm run build && npm run upload:components
+	@cd ui_src&& npm run build && npm run upload:components

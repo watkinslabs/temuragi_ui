@@ -75,52 +75,46 @@ export const AuthProvider = ({ children }) => {
     const checkAuth = async () => {
         const api_token = localStorage.getItem('api_token');
         const refresh_token = localStorage.getItem('refresh_token');
-
+    
+        // If no tokens at all, you're not logged in - done
         if (!api_token || !refresh_token) {
             setLoading(false);
             return;
         }
-
-        // Set token expiry
+    
+        // Check token expiry
         const expiry = get_token_expiry(api_token);
         token_expiry.current = expiry;
-
-        // Check if token is already expired BEFORE making any API calls
+    
+        // If token is expired, don't try to refresh on mount
+        // Just clear auth and show login
         if (is_token_expired(expiry)) {
-            console.log('Token expired on mount, refreshing...');
-            const refresh_success = await refreshToken();
-            if (!refresh_success) {
-                clearAuth();
-                setLoading(false);
-                return;
-            }
-            // Get the new token after refresh
-            const new_api_token = localStorage.getItem('api_token');
-            const new_expiry = get_token_expiry(new_api_token);
-            token_expiry.current = new_expiry;
+            console.log('Token expired on mount, clearing auth');
+            clearAuth();
+            setLoading(false);
+            return;
         }
-
+    
         try {
-            // NOW validate the current token (which should be fresh if it was expired)
-            const current_token = localStorage.getItem('api_token');
+            // Only validate if we have a non-expired token
             const response = await config.apiCall(config.getUrl(config.api.endpoints.auth.validate), {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${current_token}`,
+                    'Authorization': `Bearer ${api_token}`,
                     'Content-Type': 'application/json',
                     'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''
                 }
             });
-
+    
             if (response.ok) {
                 const data = await response.json();
                 setIsAuthenticated(true);
                 setUser(data.user_info);
-
-                // Set up periodic token validation
+                
+                // Start token check interval only for valid sessions
                 start_token_check_interval();
             } else {
-                // Validation failed - clear auth
+                // Validation failed - clear everything
                 clearAuth();
             }
         } catch (error) {
@@ -130,7 +124,7 @@ export const AuthProvider = ({ children }) => {
             setLoading(false);
         }
     };
-
+    
     const login = async (username, password, remember) => {
         try {
             const response = await config.apiCall(config.getUrl(config.api.endpoints.auth.login), {

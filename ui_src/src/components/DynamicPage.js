@@ -1,228 +1,235 @@
-// react/src/components/DynamicPage.js
-import React, { useState, useEffect, Suspense } from 'react';
-import { useSite } from '../contexts/SiteContext';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '../App';
+import { useSite } from '../contexts/SiteContext';
 import config from '../config';
-import LoadingScreen from './LoadingScreen';
-import HtmlRenderer from './HtmlRenderer';
 
-// Cache for loaded components
-const component_cache = {};
-
-// Ensure Components namespace exists
-window.Components = window.Components || {};
+// Cache for resolved routes
+const route_cache = new Map();
 
 const DynamicPage = () => {
     const { current_view, view_params } = useNavigation();
-    const { get_current_context, current_context } = useSite();
-    const [page_data, set_page_data] = useState(null);
+    const { get_current_context } = useSite();
+    const [component_info, set_component_info] = useState(null);
     const [loading, set_loading] = useState(true);
     const [error, set_error] = useState(null);
-    const [dynamic_component, set_dynamic_component] = useState(null);
+    const [page_data, set_page_data] = useState(null);
+    
+    // Track current load operation to prevent race conditions
+    const current_load_ref = useRef(null);
 
     useEffect(() => {
+        // Reset state when view changes
+        set_component_info(null);
+        set_error(null);
+        set_page_data(null);
+        
         load_page();
-    }, [current_view, current_context]);
+    }, [current_view]);
 
     const load_page = async () => {
-        set_loading(true);
-        set_error(null);
-        set_dynamic_component(null);
-
+        // Create a unique key for this load operation
+        const load_id = `${current_view}-${Date.now()}`;
+        current_load_ref.current = load_id;
+        
         try {
-            // Ask backend what component/template to load for this view
-            const response = await config.apiCall(config.getUrl(config.api.endpoints.routes.resolve), {
+            set_loading(true);
+            set_error(null);
+
+            const context = get_current_context();
+            const cache_key = `${context}:${current_view}`;
+            
+            // Check cache first
+            if (route_cache.has(cache_key)) {
+                console.log('Using cached route data for:', current_view);
+                const cached_data = route_cache.get(cache_key);
+                
+                // Only proceed if this is still the current load operation
+                if (current_load_ref.current !== load_id) return;
+                
+                await handle_route_data(cached_data, load_id);
+                return;
+            }
+
+            console.log('Resolving route:', current_view);
+            const response = await config.apiCall(config.getUrl('/routes/resolve'), {
                 method: 'POST',
                 headers: config.getAuthHeaders(),
                 body: JSON.stringify({
-                    path: `/${current_view}`,
-                    params: view_params,
-                    context: get_current_context()
+                    path: current_view,
+                    context: context,
+                    params: view_params
                 })
             });
 
-            if (!response.ok) {
-                if (response.status === 404) {
-                    console.log('View not found:', current_view);
-                    set_error('Page not found');
-                    set_loading(false);
-                    return;
-                }
-                throw new Error('Failed to load page');
-            }
-
             const data = await response.json();
-            set_page_data(data);
 
-            // If it's a component route, load the component bundle
-            if (data.component_name && data.bundle_url) {
-                await load_component_bundle(data.component_name, data.bundle_url, data.component_version);
+            // Check if we got an error response
+            if (!data.success && data.error) {
+                throw new Error(data.error);
             }
+
+            // Check if we have required data
+            if (!data.component_name && !data.html) {
+                throw new Error('No component or HTML content returned');
+            }
+
+            // Cache the resolved data
+            route_cache.set(cache_key, data);
+            
+            // Only proceed if this is still the current load operation
+            if (current_load_ref.current !== load_id) return;
+            
+            await handle_route_data(data, load_id);
+
         } catch (err) {
-            set_error(err.message || 'Failed to load page');
-        } finally {
+            // Only update error if this is still the current load operation
+            if (current_load_ref.current === load_id) {
+                console.error('Failed to load page:', err);
+                set_error(err.message);
+                set_loading(false);
+            }
+        }
+    };
+
+    const handle_route_data = async (data, load_id) => {
+        // If HTML response
+        if (data.type === 'html' && data.html) {
+            set_page_data({ type: 'html', html: data.html });
+            set_loading(false);
+            return;
+        }
+
+        // Component response
+        const module_name = data.component_name;
+        const module_type = data.component_type || 'page';
+
+        // Store info for later retrieval
+        set_component_info({
+            name: module_name,
+            type: module_type,
+            props: data.props
+        });
+
+        // Check if already loaded in registry
+        if (window.app_registry.is_loaded(module_type, module_name)) {
+            console.log('Component already loaded:', module_name);
+            set_loading(false);
+            return;
+        }
+
+        // Validate bundle URL
+        if (!data.bundle_url) {
+            throw new Error('No bundle URL provided');
+        }
+
+        // Load the bundle
+        await load_bundle(data.bundle_url, module_name, module_type);
+        
+        // Only update loading state if this is still the current load operation
+        if (current_load_ref.current === load_id) {
             set_loading(false);
         }
     };
 
-    const wait_for_component = (component_name, timeout = 5000) => {
+    const load_bundle = async (bundle_url, module_name, module_type) => {
         return new Promise((resolve, reject) => {
-            const start_time = Date.now();
-            
-            // Check if component is already available
-            if (window.Components[component_name]) {
-                resolve(window.Components[component_name]);
-                return;
-            }
-            
-            // Listen for component registration event
+            console.log('Loading bundle for:', module_name);
+
             const handle_registration = (event) => {
-                if (event.detail.name === component_name) {
-                    window.removeEventListener('component_registered', handle_registration);
-                    resolve(event.detail.component);
+                if (event.detail.name === module_name) {
+                    console.log('Module registered:', module_name);
+                    window.removeEventListener('module_registered', handle_registration);
+                    resolve();
                 }
             };
-            
-            window.addEventListener('component_registered', handle_registration);
-            
-            // Also poll for component availability
-            const check_interval = setInterval(() => {
-                // Check multiple possible locations
-                const component = window.Components[component_name] || 
-                                window[component_name] ||
-                                window.Components[`components/${component_name}`];
-                
-                if (component) {
-                    clearInterval(check_interval);
-                    window.removeEventListener('component_registered', handle_registration);
-                    
-                    // Ensure it's registered in the standard location
-                    if (!window.Components[component_name]) {
-                        window.Components[component_name] = component;
+
+            window.addEventListener('module_registered', handle_registration);
+
+            const script = document.createElement('script');
+            script.src = bundle_url;
+            script.async = true;
+
+            script.onload = () => {
+                console.log('Script loaded:', bundle_url);
+                // Give it a moment to register
+                setTimeout(() => {
+                    if (!window.app_registry.is_loaded(module_type, module_name)) {
+                        window.removeEventListener('module_registered', handle_registration);
+                        reject(new Error(`Component ${module_name} did not register properly`));
                     }
-                    
-                    resolve(component);
-                } else if (Date.now() - start_time > timeout) {
-                    clearInterval(check_interval);
-                    window.removeEventListener('component_registered', handle_registration);
-                    reject(new Error(`Component ${component_name} not found after ${timeout}ms`));
-                }
-            }, 50);
+                }, 100);
+            };
+
+            script.onerror = () => {
+                console.error('Script failed to load:', bundle_url);
+                window.removeEventListener('module_registered', handle_registration);
+                reject(new Error(`Failed to load: ${bundle_url}`));
+            };
+
+            document.head.appendChild(script);
         });
     };
 
-    const load_component_bundle = async (component_name, bundle_url, version) => {
-        const cache_key = `${component_name}_${version || 'latest'}`;
-
-        // Check cache first
-        if (component_cache[cache_key]) {
-            set_dynamic_component(() => component_cache[cache_key]);
-            return;
-        }
-
-        try {
-            // Ensure React is available globally
-            if (!window.React) {
-                window.React = React;
-                console.warn('React was not available globally, setting it now');
-            }
-
-            console.log(`Loading component bundle: ${component_name} from ${bundle_url}`);
-
-            // Load the script
-            await new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = bundle_url;
-                script.async = true;
-
-                script.onload = () => {
-                    console.log(`Script loaded for ${component_name}`);
-                    resolve();
-                };
-
-                script.onerror = (e) => {
-                    console.error(`Failed to load script: ${bundle_url}`, e);
-                    reject(new Error(`Failed to load script: ${bundle_url}`));
-                };
-
-                document.head.appendChild(script);
-            });
-
-            // Wait for component to be registered
-            console.log(`Waiting for component ${component_name} to be registered...`);
-            const loaded_component = await wait_for_component(component_name);
-            
-            console.log(`Component ${component_name} loaded successfully`);
-            
-            // Cache it
-            component_cache[cache_key] = loaded_component;
-            set_dynamic_component(() => loaded_component);
-            
-        } catch (err) {
-            console.error(`Failed to load component ${component_name}:`, err);
-            set_error(`Failed to load component: ${component_name} - ${err.message}`);
-        }
-    };
-
-    // Show loading inside the layout
-    if (loading) {
-        return (
-            <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
-                <div className="spinner-border text-primary" role="status">
-                    <span className="visually-hidden">Loading...</span>
-                </div>
-            </div>
-        );
-    }
-
-    // Show error
-    if (error) {
-        return (
-            <div className="container mt-4">
-                <div className="alert alert-danger">
-                    <h4 className="alert-heading">Error</h4>
-                    <p>{error}</p>
-                </div>
-            </div>
-        );
-    }
-
-    // Render dynamic component
-    if (dynamic_component && page_data) {
-        // Create component element with proper casing
-        const DynamicComponentElement = dynamic_component;
-        
-        // Merge route params with configured props
-        const component_props = {
-            ...page_data.props,
-            route_params: view_params,
-            route_config: page_data.config || {},
-            meta: {
-                title: page_data.title,
-                description: page_data.description
-            }
+    // Clear cache when context changes
+    useEffect(() => {
+        const handle_context_change = () => {
+            console.log('Context changed, clearing route cache');
+            route_cache.clear();
         };
 
+        // Listen for context changes
+        window.addEventListener('context_changed', handle_context_change);
+        
+        return () => {
+            window.removeEventListener('context_changed', handle_context_change);
+        };
+    }, []);
+
+    console.log('DynamicPage render - loading:', loading, 'component_info:', component_info, 'error:', error);
+
+    if (loading) {
         return (
-            <Suspense fallback={
-                <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
-                    <div className="spinner-border text-primary" role="status">
-                        <span className="visually-hidden">Loading...</span>
-                    </div>
-                </div>
-            }>
-                <DynamicComponentElement {...component_props} />
-            </Suspense>
+            <div className="d-flex justify-content-center p-5">
+                <div className="spinner-border" />
+            </div>
         );
     }
 
-    // Render HTML template
-    if (page_data?.html) {
-        return <HtmlRenderer html={page_data.html} config={page_data.config} />;
+    if (error) {
+        return (
+            <div className="alert alert-danger m-3">
+                <h5>Error Loading Page</h5>
+                <p>{error}</p>
+                <small className="text-muted">View: {current_view}</small>
+            </div>
+        );
     }
 
-    // Default: show warning
-    return <div className="alert alert-warning m-3">Unknown page type</div>;
+    // HTML response
+    if (page_data?.type === 'html' && page_data?.html) {
+        return (
+            <div dangerouslySetInnerHTML={{ __html: page_data.html }} />
+        );
+    }
+
+    // Component response
+    if (component_info) {
+        // Get component from registry at render time
+        const PageComponent = window.app_registry[`get_${component_info.type}`](component_info.name);
+        
+        if (!PageComponent) {
+            return (
+                <div className="alert alert-danger m-3">
+                    Component {component_info.name} not found in registry
+                </div>
+            );
+        }
+
+        console.log('Rendering component:', component_info.name);
+        return <PageComponent key={`${component_info.name}-${current_view}`} {...component_info.props} route_params={view_params} />;
+    }
+
+    return <div className="alert alert-warning m-3">Nothing to display</div>;
 };
 
 export default DynamicPage;

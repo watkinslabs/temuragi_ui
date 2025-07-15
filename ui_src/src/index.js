@@ -1,46 +1,44 @@
 import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App, { NavigationContext, useNavigation } from './App';
-import { SiteContext, useSite } from './contexts/SiteContext';
-import config from './config';
-import register_default_components from './component_registry';
+import ReactDOM from 'react-dom';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+import { initializeRegistry } from './utils/registry';
+import { useAuth } from './contexts/AuthContext';
+import { useSite } from './contexts/SiteContext';
+import { useNavigation } from './App';
 
+// Initialize registry
+initializeRegistry();
+
+// Expose React
 window.React = React;
 window.ReactDOM = ReactDOM;
 
-// Make contexts and hooks available for dynamic components
-window.NavigationContext = NavigationContext;
-window.useNavigation = useNavigation;
-window.SiteContext = SiteContext;
+// Expose hooks so dynamic bundles can use them
+window.useAuth = useAuth;
 window.useSite = useSite;
-window.config = config;
+window.useNavigation = useNavigation;
 
-// Ensure they're available on the global object too
-if (typeof global !== 'undefined') {
-    global.React = React;
-    global.ReactDOM = ReactDOM;
-}
-
-// Initialize Components namespace
-window.Components = window.Components || {};
-
-// Register all default components
-register_default_components();
-
-// Debug helper
-window.list_components = () => {
-    console.log('Available components:', Object.keys(window.Components));
-    return window.Components;
+// Expose other shared utilities
+window.app_utils = {
+    config: require('./config').default,
+    // Add other utilities as needed
 };
 
-// Wait for any existing app initialization if needed
-const init_react = () => {
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-};
+// Also expose config directly for backward compatibility
+window.appConfig = require('./config').default;
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init_react);
-} else {
-    init_react();
-}
+// Register core components
+import Login from './pages/Login/Login';
+import LoadingScreen from './components/LoadingScreen';
+import DefaultLayout from './components/DefaultLayout/DefaultLayout';
+import ServerDataTable from './components/ServerDataTable';
+
+window.app_registry.register_page('Login', Login);
+window.app_registry.register_component('LoadingScreen', LoadingScreen);
+window.app_registry.register_layout('DefaultLayout', DefaultLayout);
+window.app_registry.register_component('ServerDataTable', ServerDataTable);
+
+// Start app
+const root = createRoot(document.getElementById('root'));
+root.render(<App />);
