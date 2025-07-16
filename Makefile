@@ -5,13 +5,13 @@
 
 # ui_srcbuild commands
 react-install:
-	cd ui_src&& npm install
+	cd ui_src; npm install
 
 build:
-	cd ui_src&& npm run build
+	cd ui_src; npm run build
 
-upload: build
-	cd ui_src&& API_TOKEN="$(API_TOKEN)" npm run upload:components
+upload: 
+	cd ui_src; npm run upload:components
 
 react-clean:
 	cd ui_src&& npm run clean
@@ -33,6 +33,3 @@ build-all: react-build react-upload
 	@echo "All components built and synced to database"
 
 
-
-build:
-	@cd ui_src&& npm run build && npm run upload:components

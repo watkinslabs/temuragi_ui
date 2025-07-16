@@ -48,7 +48,7 @@ function parse_routes_from_source(source_code, component_name) {
 }
 
 async function uploadComponents() {
-    const API_BASE = process.env.API_BASE || 'http://localhost:5000';
+    const API_BASE = process.env.API_BASE || 'http://localhost:5050';
     const API_TOKEN = process.env.API_TOKEN;
 
     if (!API_TOKEN) {

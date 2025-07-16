@@ -5,3 +5,4 @@ ui_src/src/user_components/
 app/
 .env
 config.yaml
+ui_src/src/pages/PR/
