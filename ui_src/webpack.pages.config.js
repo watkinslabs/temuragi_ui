@@ -6,6 +6,7 @@ const webpack = require('webpack');
 
 // Find all entry points
 const page_entries = {};
+const user_entries = {};
 const component_entries = {};
 
 // Scan for pages with various entry patterns
@@ -40,6 +41,34 @@ page_patterns.forEach(pattern => {
     });
 });
 
+// Scan for user directory with same patterns
+const user_patterns = [
+    'src/user/*/index.js',
+    'src/user/*/*.js',
+    'src/user/*/*/index.js',
+];
+
+user_patterns.forEach(pattern => {
+    glob.sync(pattern).forEach(file => {
+        // Extract user module name from path
+        const relative = path.relative('src/user', file);
+        const parts = relative.split('/');
+
+        let name;
+        if (parts[parts.length - 1] === 'index.js') {
+            parts.pop();
+            name = parts.join('/');
+        } else {
+            name = parts.join('/').replace('.js', '');
+        }
+
+        // Skip if already added or is a component within a user module
+        if (!user_entries[name] && !name.includes('components/')) {
+            user_entries[`user/${name}`] = `./${file}`;
+        }
+    });
+});
+
 // Scan for standalone components
 glob.sync('src/components/*/index.js').forEach(file => {
     const name = path.dirname(file).split('/').pop();
@@ -49,11 +78,12 @@ glob.sync('src/components/*/index.js').forEach(file => {
 });
 
 console.log('Building pages:', Object.keys(page_entries));
+console.log('Building user modules:', Object.keys(user_entries));
 console.log('Building components:', Object.keys(component_entries));
 
 module.exports = {
     mode: 'production',
-    entry: { ...page_entries, ...component_entries },
+    entry: { ...page_entries, ...user_entries, ...component_entries },
 
     output: {
         path: path.resolve(__dirname, '../app/static/js/bundles'),
@@ -91,6 +121,7 @@ module.exports = {
             '@': path.resolve(__dirname, 'src'),
             '@components': path.resolve(__dirname, 'src/components'),
             '@pages': path.resolve(__dirname, 'src/pages'),
+            '@user': path.resolve(__dirname, 'src/user'),
             '@utils': path.resolve(__dirname, 'src/utils')
         }
     },
@@ -144,6 +175,19 @@ module.exports = {
                 window.app_registry.register_page('${page_name}', module);
                 window.dispatchEvent(new CustomEvent('module_registered', {
                     detail: { name: '${page_name}', type: 'page', module: module }
+                }));
+            }
+        })();
+        `;
+                } else if (chunk_name.startsWith('user/')) {
+                    const user_module_name = chunk_name.replace('user/', '');
+                    return `
+        (function() {
+            const module = typeof exports !== 'undefined' ? exports.default || exports : null;
+            if (module && window.app_registry) {
+                window.app_registry.register_user_module('${user_module_name}', module);
+                window.dispatchEvent(new CustomEvent('module_registered', {
+                    detail: { name: '${user_module_name}', type: 'user', module: module }
                 }));
             }
         })();
