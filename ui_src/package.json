@@ -1,6 +1,6 @@
 {
   "name": "react-app",
-  "version": "1.0.0",
+  "version": "0.1.11",
   "scripts": {
     "start": "webpack serve --mode development",
     "build": "npm run build:main && npm run build:pages",
@@ -8,8 +8,8 @@
     "build:pages": "webpack --config webpack.pages.config.js",
     "build:watch": "webpack --mode development --watch",
     "upload:components": "node scripts/upload-components.js",
-    "clean": "rm -rf ../app/static/js/*",
-    "analyze": "webpack-bundle-analyzer ../app/static/js/stats.json"
+    "clean": "rm -rf ../app/js/*",
+    "analyze": "webpack-bundle-analyzer ../app/js/stats.json"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
