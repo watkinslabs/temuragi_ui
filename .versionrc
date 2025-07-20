@@ -1,0 +1,8 @@
+{
+  "files": {
+    "version": true,
+    "package.json": true
+  },
+  "package_json_paths": ["ui_src/package.json"],
+  "auto_discover": true
+}

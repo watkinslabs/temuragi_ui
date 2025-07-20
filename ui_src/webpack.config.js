@@ -11,10 +11,10 @@ module.exports = {
     },
 
     output: {
-        path: path.resolve(__dirname, '../app/static/js'),
+        path: path.resolve(__dirname, '../app/js'),
         filename: '[name].js',
         chunkFilename: '[name].chunk.js',
-        publicPath: '/static/js/',
+        publicPath: '/js/',
         clean: {
             keep: /bundles\// // Keep bundles directory when cleaning
         }
@@ -79,12 +79,12 @@ module.exports = {
         // Generate manifest for backend to know filenames
         new WebpackManifestPlugin({
             fileName: 'manifest.json',
-            publicPath: '/static/js/'
+            publicPath: '/js/'
         })
     ],
 
     devServer: {
-        static: path.join(__dirname, '../app/static'),
+        static: path.join(__dirname, '../app'),
         port: 3000,
         hot: true,
         proxy: {

@@ -6,3 +6,4 @@ app/
 .env
 config.yaml
 ui_src/src/pages/PR/
+.vscode

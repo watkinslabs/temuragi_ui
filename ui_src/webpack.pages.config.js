@@ -86,10 +86,10 @@ module.exports = {
     entry: { ...page_entries, ...user_entries, ...component_entries },
 
     output: {
-        path: path.resolve(__dirname, '../app/static/js/bundles'),
+        path: path.resolve(__dirname, '../app/js/bundles'),
         filename: '[name].js',
         chunkFilename: 'chunks/[name].js',
-        publicPath: '/static/js/bundles/',
+        publicPath: '/js/bundles/',
         clean: true
     },
 
@@ -223,7 +223,7 @@ module.exports = {
                         if (name.endsWith('.js') && !name.includes('.map')) {
                             const key = name.replace(/\.js$/, '');
                             manifest[key] = {
-                                url: `/static/js/bundles/${name}`,
+                                url: `/js/bundles/${name}`,
                                 dependencies: dependencies[key] || { files: [], imports: [] }
                             };
                         }

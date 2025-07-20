@@ -1,0 +1,9 @@
+ui_src/node_modules
+node_modules
+.git
+.env
+*.log
+dist
+build
+.github
+app

@@ -1,0 +1,219 @@
+name: Docker Build and Push
+
+on:
+  push:
+    branches: [ main, master ]name: Docker Build and Push
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+env:
+  DOCKER_HUB_USERNAME: giawatts
+  DOCKER_HUB_ORG: watkinslabs
+  IMAGE_NAME_STATIC: temuragi_static
+  IMAGE_NAME_REACT: temuragi_react
+  API_BASE: ${{ secrets.API_BASE }}
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install wl_version_manager
+      run: pip install wl_version_manager
+
+    - name: Bump version (if not a tag)
+      if: "!startsWith(github.ref, 'refs/tags/v')"
+      run: |
+        BUMP_TYPE="${{ github.event.inputs.bump_type || 'patch' }}"
+        echo "Bumping $BUMP_TYPE version..."
+        wl_version_manager --update-package-json $BUMP_TYPE 
+
+    - name: Get version
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/v* ]]; then
+          # Use tag version
+          VERSION=${GITHUB_REF#refs/tags/v}
+        else
+          # Use VERSION file
+          VERSION=$(cat VERSION)
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Build and upload components
+      working-directory: ./ui_src
+      env:
+        API_TOKEN: ${{ secrets.API_TOKEN }}
+        API_BASE: ${{ env.API_BASE }}
+      run: |
+        npm ci
+        npm run build
+        npm run upload:components || echo "Component upload skipped"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ env.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+    - name: Build and push React builder image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        target: builder
+        build-args: |
+          VERSION=${{ steps.version.outputs.version }}
+        tags: |
+          ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_REACT }}:latest
+          ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_REACT }}:${{ steps.version.outputs.version }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Build and push static production image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        target: production
+        build-args: |
+          VERSION=${{ steps.version.outputs.version }}
+        tags: |
+          ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_STATIC }}:latest
+          ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_STATIC }}:${{ steps.version.outputs.version }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Commit version bump
+      if: "!startsWith(github.ref, 'refs/tags/v')"
+      run: |
+        if [[ -n $(git status -s) ]]; then
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add VERSION ui_src/package.json
+          git commit -m "Bump version to ${{ steps.version.outputs.version }}"
+          git push
+        fi
+
+    - name: Create Release
+      if: success() && !startsWith(github.ref, 'refs/tags/')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        release_name: Release v${{ steps.version.outputs.version }}
+        body: |
+          Docker images published:
+          - `${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_REACT }}:${{ steps.version.outputs.version }}`
+          - `${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_STATIC }}:${{ steps.version.outputs.version }}`
+        draft: false
+        prerelease: false
+    tags:
+      - 'v*'
+
+env:
+  DOCKER_HUB_USERNAME: giawatts
+  DOCKER_HUB_ORG: watkinslabs
+  IMAGE_NAME_STATIC: temuragi_static
+  IMAGE_NAME_REACT: temuragi_react
+  API_BASE: ${{ secrets.API_BASE }}  # Add this to GitHub secrets
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        
+    - name: Build and upload components
+      working-directory: ./ui_src
+      env:
+        API_TOKEN: ${{ secrets.API_TOKEN }}
+        API_BASE: ${{ env.API_BASE }}
+      run: |
+        npm ci
+        npm run build
+        npm run upload:components
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ env.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+        
+    - name: Get version
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/v* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/v}
+        else
+          VERSION=$(cat VERSION 2>/dev/null || echo "0.0.1")
+          VERSION="${VERSION}-dev-${GITHUB_SHA::8}"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Build and push production image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        target: production
+        tags: |
+          ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_STATIC }}:latest
+          ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_STATIC }}:${{ steps.version.outputs.version }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Build and push builder image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        target: builder
+        tags: |
+          ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_REACT }}:latest
+          ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_REACT }}:${{ steps.version.outputs.version }}

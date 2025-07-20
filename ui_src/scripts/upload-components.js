@@ -163,9 +163,9 @@ async function uploadComponents() {
 
     // Find built bundles in the actual nested structure - now includes user directory
     const bundle_patterns = [
-        path.join(__dirname, '../../app/static/js/bundles/pages/**/*.js'),
-        path.join(__dirname, '../../app/static/js/bundles/user/**/*.js'),
-        path.join(__dirname, '../../app/static/js/bundles/components/**/*.js')
+        path.join(__dirname, '../../app/js/bundles/pages/**/*.js'),
+        path.join(__dirname, '../../app/js/bundles/user/**/*.js'),
+        path.join(__dirname, '../../app/js/bundles/components/**/*.js')
     ];
 
     console.log(`\nSearching for bundles with patterns:`);
@@ -192,7 +192,7 @@ async function uploadComponents() {
         }
 
         // Extract component name and type from nested path
-        const relative_path = path.relative(path.join(__dirname, '../../app/static/js/bundles'), file);
+        const relative_path = path.relative(path.join(__dirname, '../../app/js/bundles'), file);
         const path_parts = relative_path.split(path.sep);
         const component_type = path_parts[0]; // 'pages', 'user', or 'components'
         const component_name = path.basename(file, '.js');
