@@ -1,5 +1,5 @@
 #!/bin/bash
-# build.sh - Docker build script with automatic version bumping
+# build.sh - Docker build script with automatic version bumping and attestations
 
 set -e  # Exit on error
 
@@ -7,6 +7,7 @@ set -e  # Exit on error
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Check if wl_version_manager is installed
@@ -81,57 +82,103 @@ DOCKER_HUB_ORG="watkinslabs"
 IMAGE_NAME_STATIC="temuragi_static"
 IMAGE_NAME_REACT="temuragi_react"
 
+# Check for docker buildx
+if ! docker buildx version > /dev/null 2>&1; then
+    echo -e "${RED}Docker buildx not found. Please install docker buildx plugin.${NC}"
+    exit 1
+fi
+
+# Setup buildx builder
+BUILDER_NAME="temuragi-builder"
+if ! docker buildx ls | grep -q "^${BUILDER_NAME}"; then
+    echo -e "${BLUE}Creating buildx builder: ${BUILDER_NAME}${NC}"
+    docker buildx create --name ${BUILDER_NAME} --driver docker-container --bootstrap
+fi
+
+# Use the builder
+docker buildx use ${BUILDER_NAME}
+
 # Build arguments
 BUILD_ARGS=""
 if [ "$NO_CACHE" = true ]; then
     BUILD_ARGS="--no-cache"
 fi
 
+# Platform args - build for both amd64 and arm64
+PLATFORMS="linux/amd64,linux/arm64"
+
 # Build React builder image
 if [ "$BUILD_TARGET" = "all" ] || [ "$BUILD_TARGET" = "react" ]; then
-    echo -e "${BLUE}Building React builder image: $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION${NC}"
-    docker build $BUILD_ARGS \
-        --build-arg VERSION=$NEW_VERSION \
-        --target builder \
-        -t $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION \
-        -t $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:latest \
-        .
+    echo -e "${BLUE}Building React builder image with attestations: $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION${NC}"
+    
+    if [ "$NO_PUSH" = false ]; then
+        # Login check
+        if ! docker info 2>/dev/null | grep -q "Username"; then
+            echo -e "${YELLOW}Not logged into Docker Hub. Please run: docker login${NC}"
+            exit 1
+        fi
+        
+        docker buildx build $BUILD_ARGS \
+            --platform ${PLATFORMS} \
+            --provenance=true \
+            --sbom=true \
+            --build-arg VERSION=$NEW_VERSION \
+            --target builder \
+            -t $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION \
+            -t $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:latest \
+            --push \
+            .
+    else
+        docker buildx build $BUILD_ARGS \
+            --provenance=true \
+            --sbom=true \
+            --build-arg VERSION=$NEW_VERSION \
+            --target builder \
+            -t $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION \
+            -t $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:latest \
+            --load \
+            .
+    fi
 fi
 
 # Build static production image
 if [ "$BUILD_TARGET" = "all" ] || [ "$BUILD_TARGET" = "static" ]; then
-    echo -e "${BLUE}Building static production image: $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION${NC}"
-    docker build $BUILD_ARGS \
-        --build-arg VERSION=$NEW_VERSION \
-        --target production \
-        -t $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION \
-        -t $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:latest \
-        .
+    echo -e "${BLUE}Building static production image with attestations: $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION${NC}"
+    
+    if [ "$NO_PUSH" = false ]; then
+        # Login check (if not already done)
+        if ! docker info 2>/dev/null | grep -q "Username"; then
+            echo -e "${YELLOW}Not logged into Docker Hub. Please run: docker login${NC}"
+            exit 1
+        fi
+        
+        docker buildx build $BUILD_ARGS \
+            --platform ${PLATFORMS} \
+            --provenance=true \
+            --sbom=true \
+            --build-arg VERSION=$NEW_VERSION \
+            --target production \
+            -t $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION \
+            -t $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:latest \
+            --push \
+            .
+    else
+        docker buildx build $BUILD_ARGS \
+            --provenance=true \
+            --sbom=true \
+            --build-arg VERSION=$NEW_VERSION \
+            --target production \
+            -t $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION \
+            -t $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:latest \
+            --load \
+            .
+    fi
 fi
 
-# Push to Docker Hub (unless --no-push)
 if [ "$NO_PUSH" = false ]; then
-    echo -e "${BLUE}Pushing to Docker Hub...${NC}"
-    
-    # Login check
-    if ! docker info 2>/dev/null | grep -q "Username"; then
-        echo -e "${YELLOW}Not logged into Docker Hub. Please run: docker login${NC}"
-        exit 1
-    fi
-    
-    if [ "$BUILD_TARGET" = "all" ] || [ "$BUILD_TARGET" = "react" ]; then
-        docker push $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION
-        docker push $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:latest
-    fi
-    
-    if [ "$BUILD_TARGET" = "all" ] || [ "$BUILD_TARGET" = "static" ]; then
-        docker push $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION
-        docker push $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:latest
-    fi
-    
-    echo -e "${GREEN}Pushed successfully!${NC}"
+    echo -e "${GREEN}Built and pushed successfully with attestations!${NC}"
 else
-    echo -e "${BLUE}Skipping push (--no-push specified)${NC}"
+    echo -e "${BLUE}Build complete. Skipping push (--no-push specified)${NC}"
 fi
 
 # Commit version bump
@@ -149,6 +196,16 @@ if [ "$BUILD_TARGET" = "all" ] || [ "$BUILD_TARGET" = "static" ]; then
     echo "  - $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION (production)"
 fi
 
+echo ""
+echo "To inspect attestations:"
+if [ "$BUILD_TARGET" = "all" ] || [ "$BUILD_TARGET" = "react" ]; then
+    echo "  docker buildx imagetools inspect $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION --format '{{ json .SBOM }}'"
+    echo "  docker buildx imagetools inspect $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION --format '{{ json .Provenance }}'"
+fi
+if [ "$BUILD_TARGET" = "all" ] || [ "$BUILD_TARGET" = "static" ]; then
+    echo "  docker buildx imagetools inspect $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION --format '{{ json .SBOM }}'"
+    echo "  docker buildx imagetools inspect $DOCKER_HUB_ORG/$IMAGE_NAME_STATIC:$NEW_VERSION --format '{{ json .Provenance }}'"
+fi
 echo ""
 echo "To use the builder image:"
 echo "  docker run -it $DOCKER_HUB_ORG/$IMAGE_NAME_REACT:$NEW_VERSION"

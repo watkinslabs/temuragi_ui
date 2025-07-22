@@ -59,7 +59,7 @@ jobs:
           # Use VERSION file
           VERSION=$(cat VERSION)
         fi
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
         echo "Building version: $VERSION"
 
     - name: Set up Node.js
@@ -127,15 +127,14 @@ jobs:
 
     - name: Create Release
       if: success() && !startsWith(github.ref, 'refs/tags/')
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ steps.version.outputs.version }}
-        release_name: Release v${{ steps.version.outputs.version }}
+        name: Release v${{ steps.version.outputs.version }}
         body: |
           Docker images published:
           - `${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_REACT }}:${{ steps.version.outputs.version }}`
           - `${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME_STATIC }}:${{ steps.version.outputs.version }}`
         draft: false
         prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}
