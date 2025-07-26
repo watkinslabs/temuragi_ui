@@ -424,8 +424,7 @@ if (require.main === module) {
         console.error('\n=== FATAL ERROR ===');
         console.error('Error type:', error.constructor.name);
         console.error('Error message:', error.message);
-        console.error('Stack trace:', error.stack);
-        process.exit(1);
+        console.error('Stack trace:', error.stack);9
     });
 }
 

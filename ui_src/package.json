@@ -9,7 +9,8 @@
     "build:watch": "webpack --mode development --watch",
     "upload:components": "node scripts/upload-components.js",
     "clean": "rm -rf ../app/js/*",
-    "analyze": "webpack-bundle-analyzer ../app/js/stats.json"
+    "analyze": "webpack-bundle-analyzer ../app/js/stats.json",
+    "generate-manifest": "node scripts/generate-manifest.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

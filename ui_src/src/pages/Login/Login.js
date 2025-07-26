@@ -1,3 +1,6 @@
+/**
+ * @routes ["Login"]
+*/
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import config from '../../config';
