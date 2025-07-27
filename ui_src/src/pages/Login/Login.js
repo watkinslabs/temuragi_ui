@@ -3,7 +3,9 @@
 */
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import config from '../../config';
+import LoadingScreen from '../../components/LoadingScreen';
 
 const Login = () => {
     const [username, setUsername] = useState('');
@@ -15,63 +17,51 @@ const Login = () => {
     const [site_config, setSiteConfig] = useState(null);
     const [config_loading, setConfigLoading] = useState(true);
 
-    const { login } = useAuth();
+    const { login, isAuthenticated } = useAuth();
+    const navigate = useNavigate();
+
+    // If user is already authenticated, redirect them away from login
+    useEffect(() => {
+        if (isAuthenticated) {
+            console.log('[Login] User is authenticated, redirecting to home');
+            navigate('/');
+            return;
+        }
+    }, [isAuthenticated, navigate]);
 
     useEffect(() => {
-        // CLEAR ALL AUTH DATA when login page loads
-        localStorage.removeItem('api_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user_id');
-        localStorage.removeItem('user_info');
-        sessionStorage.clear();
+        // Only do login-specific setup if NOT authenticated
+        if (!isAuthenticated) {
+            console.log('[Login] Setting up login page');
+            
+            // Apply theme
+            const saved_theme = localStorage.getItem('theme_preference') || 'light';
+            document.documentElement.setAttribute('data-theme', saved_theme);
+            document.documentElement.setAttribute('data-bs-theme', saved_theme);
 
-        // Clear cookies by making a logout request to the server
-        // This ensures server-side session is destroyed
-        const clearServerSession = async () => {
-            try {
-                await config.apiCall(config.getUrl(config.api.endpoints.auth.logout), {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''
-                    },
-                    credentials: 'same-origin'
-                });
-            } catch (e) {
-                // Ignore errors - we're logging out anyway
+            // Check remembered username
+            const remembered_username = localStorage.getItem('remembered_username');
+            if (remembered_username) {
+                setUsername(remembered_username);
+                setRemember(true);
             }
-        };
 
-        clearServerSession().then(() => {
-            // Fetch site config for branding AFTER clearing session
+            // Check login reason
+            const params = new URLSearchParams(window.location.search);
+            const reason = params.get('reason');
+
+            if (reason) {
+                setError(get_reason_message(reason));
+            }
+
+            // Fetch site config
             fetch_site_config();
-        });
-
-        // Apply theme
-        const saved_theme = localStorage.getItem('theme_preference') || 'light';
-        document.documentElement.setAttribute('data-theme', saved_theme);
-        document.documentElement.setAttribute('data-bs-theme', saved_theme);
-
-        // Check remembered username
-        const remembered_username = localStorage.getItem('remembered_username');
-        if (remembered_username) {
-            setUsername(remembered_username);
-            setRemember(true);
         }
+    }, [isAuthenticated]);
 
-        // Check login reason
-        const params = new URLSearchParams(window.location.search);
-        const reason = params.get('reason');
-
-        if (reason) {
-            setError(get_reason_message(reason));
-        }
-    }, []);
-
-    // In Login.js fetch_site_config function:
     const fetch_site_config = async () => {
         try {
-            console.log('Login page fetching site config from:', config.getUrl('/site/config'));
+            console.log('[Login] Fetching site config');
 
             const response = await config.apiCall(config.getUrl('/site/config'), {
                 method: 'GET',
@@ -84,13 +74,11 @@ const Login = () => {
 
             if (response.ok) {
                 const data = await response.json();
-                console.log('Site config response:', data);
-
-                // The site config is nested in data.site
+                console.log('[Login] Site config received');
                 setSiteConfig(data.site);
             }
         } catch (error) {
-            console.error('Failed to fetch site config:', error);
+            console.error('[Login] Failed to fetch site config:', error);
         } finally {
             setConfigLoading(false);
         }
@@ -126,20 +114,17 @@ const Login = () => {
             }
 
             // If you need to navigate to a specific view based on landing_page:
-            // Parse the landing_page URL to extract the view
             if (result.landing_page && result.landing_page !== '/') {
                 const view = result.landing_page.replace(/^\//, '') || 'home';
-                // Store it for the app to use after mounting
                 sessionStorage.setItem('initial_view', view);
             }
-            
+
             // Don't set loading to false - let the component unmount naturally
         } else {
             setError(result.message || 'Invalid username or password.');
             setLoading(false);
         }
     };
-
 
     const toggle_password = () => {
         setShowPassword(!show_password);
@@ -150,13 +135,10 @@ const Login = () => {
         ? (site_config?.logo_desktop_dark || site_config?.logo_desktop)
         : site_config?.logo_desktop;
 
-    // Debug logging
-    useEffect(() => {
-        if (site_config) {
-            console.log('Site config loaded:', site_config);
-            console.log('Logo URL:', logo);
-        }
-    }, [site_config, logo]);
+    // Don't render login form if authenticated
+    if (isAuthenticated) {
+        return <LoadingScreen />;
+    }
 
     return (
         <div className="login-container">

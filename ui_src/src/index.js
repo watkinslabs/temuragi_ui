@@ -2,13 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import App from './App';
-import { initializeRegistry } from './utils/registry';
 import { useAuth } from './contexts/AuthContext';
 import { useSite } from './contexts/SiteContext';
 import { useNavigation } from './App';
 
-// Initialize registry
-initializeRegistry();
 
 // Expose React
 window.React = React;
@@ -34,10 +31,7 @@ import LoadingScreen from './components/LoadingScreen';
 import DefaultLayout from './components/DefaultLayout/DefaultLayout';
 import ServerDataTable from './components/ServerDataTable';
 
-window.app_registry.register_page('Login', Login);
-window.app_registry.register_component('LoadingScreen', LoadingScreen);
-window.app_registry.register_layout('DefaultLayout', DefaultLayout);
-window.app_registry.register_component('ServerDataTable', ServerDataTable);
+
 
 // Start app
 const root = createRoot(document.getElementById('root'));

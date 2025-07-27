@@ -35,7 +35,7 @@ export const AuthProvider = ({ children }) => {
     const delete_cookie = (name) => {
         document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;SameSite=Lax`;
     };
-    
+
     // Allow SiteProvider to register its clear function
     const register_clear_site = (callback) => {
         setClearSiteCallback(() => callback);
@@ -44,11 +44,11 @@ export const AuthProvider = ({ children }) => {
     // Parse JWT to get expiry time
     const get_token_expiry = (token) => {
         if (!token) return null;
-        
+
         try {
             const parts = token.split('.');
             if (parts.length !== 3) return null;
-            
+
             const payload = JSON.parse(atob(parts[1]));
             // JWT exp is in seconds, convert to milliseconds
             return payload.exp ? payload.exp * 1000 : null;
@@ -61,42 +61,88 @@ export const AuthProvider = ({ children }) => {
     // Check if token is expired or about to expire
     const is_token_expired = (expiry_time, buffer_minutes = 2) => {
         if (!expiry_time) return true;
-        
+
         // Add buffer to refresh before actual expiry
         const buffer_ms = buffer_minutes * 60 * 1000;
         return Date.now() >= (expiry_time - buffer_ms);
     };
 
+    // CENTRALIZED AUTH CLEARING FUNCTION
+    const clear_all_auth_data = async () => {
+        console.log('[AuthContext] Clearing all auth data');
+        
+        // Clear all auth-related localStorage items
+        localStorage.removeItem('api_token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('user_id');
+        localStorage.removeItem('user_info');
+        localStorage.removeItem('default_context');
+
+        // Clear all sessionStorage
+        sessionStorage.clear();
+
+        // Clear cookies
+        delete_cookie('user_id');
+        delete_cookie('email');
+
+        // Clear server session
+        try {
+            await config.apiCall(config.getUrl('/auth/clear_session'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                },
+                credentials: 'include'
+            });
+        } catch (error) {
+            console.log('[AuthContext] Server session clear failed:', error);
+        }
+
+        // Clear state
+        setIsAuthenticated(false);
+        setUser(null);
+
+        // Reset refresh state
+        refresh_lock.current = false;
+        refresh_promise.current = null;
+        token_expiry.current = null;
+        refresh_retry_count.current = 0;
+
+        // Stop token check interval
+        stop_token_check_interval();
+
+        // Clear site context if callback is registered
+        if (clear_site_callback) {
+            clear_site_callback();
+        }
+    };
+
     // Check if we have valid tokens on mount
     useEffect(() => {
-        checkAuth();
+        check_auth();
     }, []);
 
-    const checkAuth = async () => {
+    const check_auth = async () => {
+        console.log('[AuthContext] Starting auth check');
+        
         const api_token = localStorage.getItem('api_token');
         const refresh_token = localStorage.getItem('refresh_token');
-    
+
         // If no tokens at all, you're not logged in - done
         if (!api_token || !refresh_token) {
+            console.log('[AuthContext] No tokens found, user not authenticated');
+            setIsAuthenticated(false);
             setLoading(false);
             return;
         }
-    
-        // Check token expiry
+
+        // Get token expiry for future checks
         const expiry = get_token_expiry(api_token);
         token_expiry.current = expiry;
-    
-        // If token is expired, don't try to refresh on mount
-        // Just clear auth and show login
-        if (is_token_expired(expiry)) {
-            console.log('Token expired on mount, clearing auth');
-            clearAuth();
-            setLoading(false);
-            return;
-        }
-    
+
         try {
-            // Only validate if we have a non-expired token
+            // Always try to validate with the backend first
             const response = await config.apiCall(config.getUrl(config.api.endpoints.auth.validate), {
                 method: 'POST',
                 headers: {
@@ -105,26 +151,51 @@ export const AuthProvider = ({ children }) => {
                     'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''
                 }
             });
-    
+
             if (response.ok) {
                 const data = await response.json();
+                console.log('[AuthContext] Token validation successful');
                 setIsAuthenticated(true);
                 setUser(data.user_info);
-                
+
                 // Start token check interval only for valid sessions
                 start_token_check_interval();
+            } else if (response.status === 401) {
+                // Token might be expired, try to refresh
+                console.log('[AuthContext] Token validation failed with 401, attempting refresh');
+                const refresh_success = await refresh_token();
+                
+                if (refresh_success) {
+                    // Refresh worked, we're authenticated
+                    console.log('[AuthContext] Refresh successful, user authenticated');
+                    setIsAuthenticated(true);
+                    start_token_check_interval();
+                } else {
+                    // Refresh failed, clear everything
+                    console.log('[AuthContext] Refresh failed, clearing auth');
+                    await clear_all_auth_data();
+                }
             } else {
-                // Validation failed - clear everything
-                clearAuth();
+                // Other error, clear auth
+                console.log('[AuthContext] Token validation failed with status:', response.status);
+                await clear_all_auth_data();
             }
         } catch (error) {
-            console.error('Auth check failed:', error);
-            clearAuth();
+            console.error('[AuthContext] Auth check error:', error);
+            // Network error - don't immediately clear auth, try refresh first
+            if (refresh_token) {
+                const refresh_success = await refresh_token();
+                if (!refresh_success) {
+                    await clear_all_auth_data();
+                }
+            } else {
+                await clear_all_auth_data();
+            }
         } finally {
             setLoading(false);
         }
     };
-    
+
     const login = async (username, password, remember) => {
         try {
             const response = await config.apiCall(config.getUrl(config.api.endpoints.auth.login), {
@@ -145,12 +216,10 @@ export const AuthProvider = ({ children }) => {
                 localStorage.setItem('user_id', data.user_id);
                 localStorage.setItem('user_info', JSON.stringify(data.user_info));
 
-
                 set_cookie('user_id', data.user_id);
                 if (data.user_info && data.user_info.email) {
                     set_cookie('email', data.user_info.email);
                 }
-
 
                 // Store token expiry
                 const expiry = get_token_expiry(data.api_token);
@@ -162,7 +231,6 @@ export const AuthProvider = ({ children }) => {
                     sessionStorage.setItem('current_context', data.default_context);
                     sessionStorage.setItem('current_section', data.default_context); // Also store as section for compatibility
                 }
-
 
                 // Handle remember me
                 if (remember) {
@@ -198,10 +266,10 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const refreshToken = async () => {
+    const refresh_token = async () => {
         // If already refreshing, wait for that refresh to complete
         if (refresh_lock.current && refresh_promise.current) {
-            console.log('Refresh already in progress, waiting...');
+            console.log('[AuthContext] Refresh already in progress, waiting...');
             return refresh_promise.current;
         }
 
@@ -210,22 +278,22 @@ export const AuthProvider = ({ children }) => {
 
         // Create the refresh promise
         refresh_promise.current = (async () => {
-            const refresh_token = localStorage.getItem('refresh_token');
-            if (!refresh_token) {
+            const refresh_token_value = localStorage.getItem('refresh_token');
+            if (!refresh_token_value) {
                 refresh_lock.current = false;
                 refresh_promise.current = null;
                 return false;
             }
 
             try {
-                console.log('Attempting token refresh...');
+                console.log('[AuthContext] Attempting token refresh...');
                 const response = await config.apiCall(config.getUrl(config.api.endpoints.auth.refresh), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''
                     },
-                    body: JSON.stringify({ refresh_token })
+                    body: JSON.stringify({ refresh_token: refresh_token_value })
                 });
 
                 if (response.ok) {
@@ -243,46 +311,46 @@ export const AuthProvider = ({ children }) => {
                     }
 
                     setIsAuthenticated(true);
-                    
+
                     // Reset retry count on successful refresh
                     refresh_retry_count.current = 0;
-                    
-                    console.log('Token refresh successful');
+
+                    console.log('[AuthContext] Token refresh successful');
                     return true;
                 } else {
                     // Check if this is a temporary failure or permanent
                     if (response.status === 401 || response.status === 403) {
                         // Refresh token is invalid, this is permanent
-                        console.log('Refresh token is invalid');
+                        console.log('[AuthContext] Refresh token is invalid');
                         refresh_retry_count.current = max_refresh_retries; // Don't retry
                         return false;
                     } else if (response.status >= 500) {
                         // Server error, might be temporary
                         refresh_retry_count.current++;
-                        console.log(`Refresh failed with server error, retry count: ${refresh_retry_count.current}`);
-                        
+                        console.log(`[AuthContext] Refresh failed with server error, retry count: ${refresh_retry_count.current}`);
+
                         if (refresh_retry_count.current < max_refresh_retries) {
                             // Wait and retry
                             await new Promise(resolve => setTimeout(resolve, 1000 * refresh_retry_count.current));
                             refresh_lock.current = false;
                             refresh_promise.current = null;
-                            return refreshToken(); // Recursive retry
+                            return refresh_token(); // Recursive retry
                         }
                     }
                     return false;
                 }
             } catch (error) {
-                console.error('Token refresh failed:', error);
+                console.error('[AuthContext] Token refresh failed:', error);
                 refresh_retry_count.current++;
-                
+
                 if (refresh_retry_count.current < max_refresh_retries) {
                     // Network error, wait and retry
                     await new Promise(resolve => setTimeout(resolve, 1000 * refresh_retry_count.current));
                     refresh_lock.current = false;
                     refresh_promise.current = null;
-                    return refreshToken(); // Recursive retry
+                    return refresh_token(); // Recursive retry
                 }
-                
+
                 return false;
             } finally {
                 refresh_lock.current = false;
@@ -293,38 +361,9 @@ export const AuthProvider = ({ children }) => {
         return refresh_promise.current;
     };
 
-    const logout = () => {
-        clearAuth();
-        // Clear site context if callback is registered
-        if (clear_site_callback) {
-            clear_site_callback();
-        }
-    };
-
-    const clearAuth = () => {
-        // Clear all auth data
-        localStorage.removeItem('api_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user_id');
-        localStorage.removeItem('user_info');
-        localStorage.removeItem('default_context');  // Changed from default_section
-
-        // Clear cookies
-        delete_cookie('user_id');
-        delete_cookie('email');
-
-        // Clear state
-        setIsAuthenticated(false);
-        setUser(null);
-
-        // Reset refresh state
-        refresh_lock.current = false;
-        refresh_promise.current = null;
-        token_expiry.current = null;
-        refresh_retry_count.current = 0;
-
-        // Stop token check interval
-        stop_token_check_interval();
+    const logout = async () => {
+        console.log('[AuthContext] User logout initiated');
+        await clear_all_auth_data();
     };
 
     // Periodic token validation
@@ -334,28 +373,15 @@ export const AuthProvider = ({ children }) => {
         // Clear any existing interval
         stop_token_check_interval();
 
-        // Check token every minute (more frequently to catch expiry)
+        // Check token every minute
         token_check_interval = setInterval(async () => {
             const api_token = localStorage.getItem('api_token');
             if (!api_token) {
-                clearAuth();
+                await clear_all_auth_data();
                 return;
             }
 
-            // Check if token is about to expire
-            if (is_token_expired(token_expiry.current, 5)) { // 5 minute buffer
-                console.log('Token about to expire, refreshing proactively...');
-                const refresh_success = await refreshToken();
-                if (!refresh_success) {
-                    // Only clear auth if we've exhausted retries
-                    if (refresh_retry_count.current >= max_refresh_retries) {
-                        clearAuth();
-                    }
-                }
-                return; // Don't validate if we just refreshed
-            }
-
-            // Validate token health periodically
+            // Let the backend validate the token
             try {
                 const response = await config.apiCall(config.getUrl(config.api.endpoints.auth.validate), {
                     method: 'POST',
@@ -367,14 +393,15 @@ export const AuthProvider = ({ children }) => {
                 });
 
                 if (!response.ok && response.status === 401) {
+                    console.log('[AuthContext] Token validation failed, attempting refresh');
                     // Try to refresh
-                    const refresh_success = await refreshToken();
+                    const refresh_success = await refresh_token();
                     if (!refresh_success && refresh_retry_count.current >= max_refresh_retries) {
-                        clearAuth();
+                        await clear_all_auth_data();
                     }
                 }
             } catch (error) {
-                console.error('Token validation error:', error);
+                console.error('[AuthContext] Token validation error:', error);
                 // Don't clear auth on network errors
             }
         }, 60 * 1000); // Check every minute
@@ -394,7 +421,7 @@ export const AuthProvider = ({ children }) => {
         };
     }, []);
 
-    // Set up global auth headers helper - MOVED TO SEPARATE useEffect
+    // Set up global auth headers helper
     useEffect(() => {
         if (!window.app) window.app = {};
 
@@ -407,7 +434,7 @@ export const AuthProvider = ({ children }) => {
         };
     }, []);
 
-    // Global fetch interceptor in separate useEffect with proper dependencies
+    // Global fetch interceptor
     useEffect(() => {
         // Only set up interceptor after initial auth check is complete
         if (loading) return;
@@ -423,7 +450,7 @@ export const AuthProvider = ({ children }) => {
                 // Don't intercept auth endpoints
                 if (!url.includes('/auth/')) {
                     // Try to refresh token
-                    const refresh_success = await refreshToken();
+                    const refresh_success = await refresh_token();
                     if (refresh_success) {
                         // Retry the original request with new token
                         const new_token = localStorage.getItem('api_token');
@@ -444,7 +471,7 @@ export const AuthProvider = ({ children }) => {
                         response = await original_fetch(...args);
                     } else if (refresh_retry_count.current >= max_refresh_retries) {
                         // Only clear auth if we've exhausted retries
-                        clearAuth();
+                        await clear_all_auth_data();
                     }
                 }
             }
@@ -465,9 +492,10 @@ export const AuthProvider = ({ children }) => {
             user,
             login,
             logout,
-            refreshToken,
-            checkAuth,
-            register_clear_site
+            refreshToken: refresh_token,
+            checkAuth: check_auth,
+            register_clear_site,
+            clear_all_auth_data  // Expose this for special cases
         }}>
             {children}
         </AuthContext.Provider>

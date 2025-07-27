@@ -1,5 +1,6 @@
 // src/App.js
 import React, { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate, useParams, useSearchParams, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SiteProvider, useSite } from './contexts/SiteContext';
 import Login from './pages/Login/Login';
@@ -9,16 +10,32 @@ import DefaultLayout from './components/DefaultLayout/DefaultLayout';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
-// Navigation context for state-based routing
-const NavigationContext = React.createContext();
+// Navigation hook that wraps React Router's navigation
+const useNavigation = () => {
+    const navigate = useNavigate();
+    const params = useParams();
+    const [search_params] = useSearchParams();
 
-export const useNavigation = () => {
-    const context = React.useContext(NavigationContext);
-    if (!context) throw new Error('useNavigation must be used within NavigationProvider');
-    return context;
+    // Convert search params to object
+    const view_params = Object.fromEntries(search_params);
+
+    // Add any route params
+    Object.assign(view_params, params);
+
+    const navigate_to = (view, params = {}) => {
+        const path = view === 'home' ? '/' : `/${view}`;
+        const search = new URLSearchParams(params).toString();
+        navigate(path + (search ? `?${search}` : ''));
+    };
+
+    return {
+        current_view: params['*'] || 'home',
+        view_params,
+        navigate_to
+    };
 };
 
-// Protected app wrapper
+// Protected wrapper
 const ProtectedApp = ({ children }) => {
     const { isAuthenticated, loading } = useAuth();
 
@@ -33,69 +50,77 @@ const ProtectedApp = ({ children }) => {
     return children;
 };
 
-// Wire up the auth and site contexts
-const ContextConnector = ({ children }) => {
-    const { register_clear_site } = useAuth();
-    const { clear_context } = useSite();
-
-    useEffect(() => {
-        // Register the site clear function with auth context
-        register_clear_site(clear_context);
-    }, [register_clear_site, clear_context]);
-
-    return children;
-};
-
-// Main app content
+// Main app content that uses routing
 const AppContent = () => {
-    const [current_view, setCurrentView] = useState('home');
-    const [view_params, setViewParams] = useState({});
-    const { initialize_context, fetch_site_config } = useSite();
+    const { initialize_context, fetch_site_config, site_info } = useSite();
     const { isAuthenticated } = useAuth();
+    const navigate = useNavigate();
+    const location = useLocation();
+    const [initial_navigation_done, setInitialNavigationDone] = useState(false);
 
-    // Initialize app
     useEffect(() => {
         if (!isAuthenticated) return;
 
+        let mounted = true;
+
         const init_app = async () => {
-            // Initialize context
-            const stored_context = sessionStorage.getItem('current_context') || 
-                                 localStorage.getItem('default_context');
-            
+            if (!mounted) return;
+
+            const stored_context = sessionStorage.getItem('current_context') ||
+                                localStorage.getItem('default_context');
+
             if (stored_context) {
                 initialize_context(stored_context);
             }
 
-            // Fetch site config
-            await fetch_site_config('/');
+            // Only fetch if we don't have site info yet
+            if (!site_info) {
+                await fetch_site_config('/');
+            }
 
-            // Check for initial view
-            const initial_view = sessionStorage.getItem('initial_view');
-            if (initial_view) {
-                navigate_to(initial_view);
-                sessionStorage.removeItem('initial_view');
+            // Handle initial navigation only once
+            if (!initial_navigation_done) {
+                setInitialNavigationDone(true);
+                
+                // Check if login stored an initial view
+                const initial_view = sessionStorage.getItem('initial_view');
+                if (initial_view) {
+                    sessionStorage.removeItem('initial_view');
+                    // Only navigate if we're at root
+                    if (location.pathname === '/') {
+                        navigate(`/${initial_view}`);
+                    }
+                }
+                // If already on a specific path, stay there
+                // This allows direct URL navigation to work
             }
         };
 
         init_app();
-    }, [isAuthenticated]);
 
-    // Navigation function
-    const navigate_to = (view, params = {}) => {
-        console.log('Navigating to:', view, params);
-        setCurrentView(view);
-        setViewParams(params);
-    };
+        return () => {
+            mounted = false;
+        };
+    }, [isAuthenticated, initialize_context, fetch_site_config, site_info, navigate, location.pathname, initial_navigation_done]);
 
-    // Make navigate_to globally available
+
     useEffect(() => {
-        window.navigate_to = navigate_to;
+        window.navigate_to = (view, params = {}) => {
+            const path = view === 'home' ? '/' : `/${view}`;
+            const search = new URLSearchParams(params).toString();
+            navigate(path + (search ? `?${search}` : ''));
+        };
+
+        // Also make useNavigation available globally for backward compatibility
+        window.useNavigation = useNavigation;
+
         return () => {
             delete window.navigate_to;
+            delete window.useNavigation;
         };
-    }, []);
+    }, [navigate]);
 
-    // Setup global showToast function
+    // Setup global showToast
     useEffect(() => {
         window.showToast = (message, type = 'info') => {
             const toast_options = {
@@ -129,35 +154,54 @@ const AppContent = () => {
         };
     }, []);
 
-    const navigation_value = {
-        current_view,
-        view_params,
-        navigate_to
-    };
-
     return (
-        <NavigationContext.Provider value={navigation_value}>
-            <ProtectedApp>
-                <DefaultLayout>
-                    <DynamicPage />
-                </DefaultLayout>
-                <ToastContainer />
-            </ProtectedApp>
-        </NavigationContext.Provider>
+        <>
+            <Routes>
+                {/* Login route - only accessible when NOT authenticated */}
+                <Route path="/login" element={
+                    isAuthenticated ? <Navigate to="/" replace /> : <Login />
+                } />
+                
+                {/* All other routes - require authentication */}
+                <Route path="/*" element={
+                    <ProtectedApp>
+                        <DefaultLayout>
+                            <DynamicPage />
+                        </DefaultLayout>
+                    </ProtectedApp>
+                } />
+            </Routes>
+            <ToastContainer />
+        </>
     );
 };
 
+// Wire up contexts
+const ContextConnector = ({ children }) => {
+    const { register_clear_site } = useAuth();
+    const { clear_context } = useSite();
+
+    useEffect(() => {
+        register_clear_site(clear_context);
+    }, [register_clear_site, clear_context]);
+
+    return children;
+};
+
+// Main App with Router
 const App = () => {
     return (
-        <AuthProvider>
-            <SiteProvider>
-                <ContextConnector>
-                    <AppContent />
-                </ContextConnector>
-            </SiteProvider>
-        </AuthProvider>
+        <BrowserRouter>
+            <AuthProvider>
+                <SiteProvider>
+                    <ContextConnector>
+                        <AppContent />
+                    </ContextConnector>
+                </SiteProvider>
+            </AuthProvider>
+        </BrowserRouter>
     );
 };
 
 export default App;
-export { NavigationContext };
+export { useNavigation };

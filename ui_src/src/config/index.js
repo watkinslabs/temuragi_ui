@@ -1,7 +1,7 @@
 // react/src/config/index.js
 const config = {
     api: {
-        base: '/v2/api',
+        base: '/api',
         endpoints: {
             // Auth endpoints
             auth: {
@@ -11,14 +11,13 @@ const config = {
                 refresh: '/auth/refresh',
                 status: '/auth/status'
             },
+            reports: {
+
+                config: '/reports/config'
+            },
             // Template endpoints
             templates: {
                 get: '/templates/:slug'
-            },
-            // Route resolution
-            routes: {
-                resolve: '/routes/resolve',
-                list: '/routes'
             },
             // Data endpoint
             data: '/data'

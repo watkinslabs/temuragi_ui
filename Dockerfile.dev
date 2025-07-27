@@ -11,20 +11,8 @@ RUN adduser -D -g 'www' www && \
 
 WORKDIR /app
 
-# Copy package files
-COPY ./ui_src/package*.json ./
-RUN npm install
-
-# Build the React app
-COPY ./ui_src ./
-RUN npm run build && \
-    npm run generate-manifest && \
-    ls -la /app && \
-    find /app -name "*.js" -o -name "*.html" | head -20 && \
-    cp -r /app/* /usr/share/nginx/html/ || true
-
 # Copy static files
-COPY ./static/* /usr/share/nginx/html/
+COPY ./static/* /app/
 
 # Copy nginx config
 COPY ./nginx.conf /etc/nginx/nginx.conf

@@ -289,11 +289,3 @@ const ReportBuilder = ({ route_params = {} }) => {
 };
 
 export default ReportBuilder;
-
-// Self-register when loaded as dynamic bundle
-if (window.app_registry) {
-    window.app_registry.register_page('ReportBuilder', ReportBuilder);
-    window.dispatchEvent(new CustomEvent('module_registered', {
-        detail: { name: 'ReportBuilder', type: 'page', module: ReportBuilder }
-    }));
-}

@@ -56,7 +56,7 @@ const ServerDataTable = ({
             set_table_config({
                 model_name: model_name,
                 report_name: report_id || model_name?.toLowerCase(),
-                api_url: api_url || '/v2/api/data',
+                api_url: api_url,
                 page_length: 25,
                 show_search: true,
                 show_column_search: false,
@@ -84,7 +84,7 @@ const ServerDataTable = ({
             set_config_loading(true);
 
             // Fetch report configuration
-            const response = await config.apiCall('/v2/api/reports/config', {
+            const response = await config.apiCall(config.api.base+config.api.reports.config, {
                 method: 'POST',
                 headers: config.getAuthHeaders(),
                 body: JSON.stringify({

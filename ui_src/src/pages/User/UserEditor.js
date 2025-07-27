@@ -888,10 +888,3 @@ const UserEditor = ({ route_params = {} }) => {
 
 export default UserEditor;
 
-// Self-register when loaded as dynamic bundle
-if (window.app_registry) {
-    window.app_registry.register_page('UserEditor', UserEditor);
-    window.dispatchEvent(new CustomEvent('module_registered', {
-        detail: { name: 'UserEditor', type: 'page', module: UserEditor }
-    }));
-}
