@@ -84,7 +84,7 @@ const ServerDataTable = ({
             set_config_loading(true);
 
             // Fetch report configuration
-            const response = await config.apiCall(config.api.base+config.api.reports.config, {
+            const response = await config.apiCall(config.api.base+config.api.endpoints.reports.config, {
                 method: 'POST',
                 headers: config.getAuthHeaders(),
                 body: JSON.stringify({
